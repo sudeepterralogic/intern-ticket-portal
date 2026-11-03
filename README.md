@@ -1,1 +1,2 @@
 # intern-ticket-portal
+A multi-tenant help-desk ticketing module: users of an organisation raise support tickets, agents work them through a status workflow, admins manage users and see everything. Modelled on ClickScan's Help Desk module.
