@@ -1,0 +1,184 @@
+{
+  "info": {
+    "name": "Ticket Portal - Users API practice",
+    "description": "Run the requests in order (1 -> 11). Request 1 logs in and saves the token automatically. Each request has a Tests tab that checks the status code.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "email", "value": "" },
+    { "key": "username", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Login as admin (saves token)",
+      "event": [{
+        "listen": "test",
+        "script": { "exec": [
+          "pm.test('Status is 201 or 200', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+          "const body = pm.response.json();",
+          "pm.collectionVariables.set('token', body.access_token);",
+          "pm.test('Got a token', () => pm.expect(body.access_token).to.be.a('string'));"
+        ]}
+      }],
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/auth/login",
+        "body": { "mode": "raw", "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin@123\"\n}" }
+      }
+    },
+    {
+      "name": "2. Create user -> 201",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": { "exec": [
+            "// New email/username every run so it never clashes with an old one",
+            "const n = Date.now();",
+            "pm.collectionVariables.set('email', `practice_${n}@example.com`);",
+            "pm.collectionVariables.set('username', `practice_${n}`);"
+          ]}
+        },
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+            "const body = pm.response.json();",
+            "pm.collectionVariables.set('userId', body.id);",
+            "pm.test('Password is NOT returned', () => pm.expect(body).to.not.have.property('password'));"
+          ]}
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/users",
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"Practice User\",\n  \"username\": \"{{username}}\",\n  \"email\": \"{{email}}\",\n  \"password\": \"secret123\",\n  \"role\": \"Agent\"\n}" }
+      }
+    },
+    {
+      "name": "3. Create with same email -> 409",
+      "event": [{
+        "listen": "test",
+        "script": { "exec": [
+          "pm.test('Status is 409', () => pm.response.to.have.status(409));",
+          "const body = pm.response.json();",
+          "pm.test('Error has the standard shape', () => pm.expect(body).to.include.keys('statusCode', 'error', 'message', 'path', 'method', 'timestamp'));"
+        ]}
+      }],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/users",
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"Someone Else\",\n  \"username\": \"{{username}}_2\",\n  \"email\": \"{{email}}\",\n  \"password\": \"secret123\"\n}" }
+      }
+    },
+    {
+      "name": "4. List + search + pagination -> 200",
+      "event": [{
+        "listen": "test",
+        "script": { "exec": [
+          "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+          "const body = pm.response.json();",
+          "pm.test('Has data and meta', () => pm.expect(body).to.include.keys('data', 'meta'));",
+          "pm.test('Found the new user', () => pm.expect(body.meta.total).to.be.at.least(1));",
+          "pm.test('No passwords in list', () => body.data.forEach(u => pm.expect(u).to.not.have.property('password')));"
+        ]}
+      }],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/users?page=1&limit=5&search={{username}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["users"],
+          "query": [
+            { "key": "page", "value": "1" },
+            { "key": "limit", "value": "5" },
+            { "key": "search", "value": "{{username}}" },
+            { "key": "role", "value": "Agent", "disabled": true }
+          ]
+        }
+      }
+    },
+    {
+      "name": "5. Get user by id -> 200",
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"] }
+      }],
+      "request": { "method": "GET", "url": "{{baseUrl}}/users/{{userId}}" }
+    },
+    {
+      "name": "6. Update user (PUT) -> 200",
+      "event": [{
+        "listen": "test",
+        "script": { "exec": [
+          "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+          "pm.test('Name changed', () => pm.expect(pm.response.json().name).to.eql('Practice User Updated'));"
+        ]}
+      }],
+      "request": {
+        "method": "PUT",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/users/{{userId}}",
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"Practice User Updated\"\n}" }
+      }
+    },
+    {
+      "name": "7. Get unknown id -> 404",
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.test('Status is 404', () => pm.response.to.have.status(404));"] }
+      }],
+      "request": { "method": "GET", "url": "{{baseUrl}}/users/999999" }
+    },
+    {
+      "name": "8. Bad input -> 400",
+      "event": [{
+        "listen": "test",
+        "script": { "exec": [
+          "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+          "pm.test('message lists what is wrong', () => pm.expect(pm.response.json().message).to.be.an('array'));"
+        ]}
+      }],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/users",
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"not-an-email\"\n}" }
+      }
+    },
+    {
+      "name": "9. No token -> 401",
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.test('Status is 401', () => pm.response.to.have.status(401));"] }
+      }],
+      "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{baseUrl}}/users" }
+    },
+    {
+      "name": "10. Delete user -> 200",
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"] }
+      }],
+      "request": { "method": "DELETE", "url": "{{baseUrl}}/users/{{userId}}" }
+    },
+    {
+      "name": "11. Get deleted user -> 404",
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.test('Status is 404', () => pm.response.to.have.status(404));"] }
+      }],
+      "request": { "method": "GET", "url": "{{baseUrl}}/users/{{userId}}" }
+    }
+  ]
+}
