@@ -24,11 +24,11 @@ function AssignSelect({ ticket, agentsState, onAssign }: Props) {
   const { agents, loading, error: loadError } = agentsState;
 
   if (loading) {
-    return <span className="empty-message">Loading agents...</span>;
+    return <span className="field-hint">Loading agents...</span>;
   }
 
   if (loadError) {
-    return <span style={{ color: "crimson" }}>{loadError}</span>;
+    return <span className="field-error">{loadError}</span>;
   }
 
   const handleChange = async (value: string) => {
@@ -44,9 +44,10 @@ function AssignSelect({ ticket, agentsState, onAssign }: Props) {
   };
 
   return (
-    <div>
+    <div className="inline-field">
       <select
         value={ticket.assignedToId ?? ""}
+        className="select-sm"
         disabled={saving}
         onChange={(e) => handleChange(e.target.value)}
       >
@@ -58,11 +59,11 @@ function AssignSelect({ ticket, agentsState, onAssign }: Props) {
         ))}
       </select>
 
-      {saving && <small className="empty-message"> Saving...</small>}
+      {saving && <small className="field-hint">Saving...</small>}
       {agents.length === 0 && (
-        <small className="empty-message"> No active agents available.</small>
+        <small className="field-hint">No active agents available.</small>
       )}
-      {error && <small style={{ color: "crimson", display: "block" }}>{error}</small>}
+      {error && <small className="field-error">{error}</small>}
     </div>
   );
 }

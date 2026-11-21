@@ -1,29 +1,32 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import type {
-  UserRole,
-  ManagedUser,
-  CreateUserInput,
-  UpdateUserInput,
-} from "../types/ticket";
+import type { ManagedUser, UpdateUserInput } from "../types/ticket";
 
-type Props = {
-  currentRole: UserRole;
-  users: ManagedUser[];
-  // Both return an error message, or null when it worked
-  onCreateUser: (user: CreateUserInput) => Promise<string | null>;
-  onUpdateUser: (id: number, changes: UpdateUserInput) => Promise<string | null>;
-  onDeleteUser: (id: number) => void;
-};
+import { useAppDispatch, useAppSelector } from "../store/hooks";
+import { selectRole } from "../store/authSlice";
+import {
+  createUser,
+  deleteUser,
+  fetchUsers,
+  selectUsers,
+  selectUsersError,
+  selectUsersStatus,
+  updateUser,
+} from "../store/usersSlice";
+import Avatar from "../components/Avatar";
+import Icon from "../components/Icon";
+import { RoleBadge } from "../components/StatusBadge";
 
-function Users({
-  currentRole,
-  users,
-  onCreateUser,
-  onUpdateUser,
-  onDeleteUser,
-}: Props) {
+// Reads users from the Redux store and changes them with thunks.
+// No API calls here: the thunks call services/api.ts (axios).
+function Users() {
+  const dispatch = useAppDispatch();
+  const currentRole = useAppSelector(selectRole);
+  const users = useAppSelector(selectUsers);
+  const listStatus = useAppSelector(selectUsersStatus);
+  const listError = useAppSelector(selectUsersError);
+
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -36,8 +39,15 @@ function Users({
   // null = creating a new user; a user = editing that user
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
 
+  // Load the list when the page opens (Admin only; the backend returns 403 otherwise)
+  useEffect(() => {
+    if (currentRole === "Admin") {
+      dispatch(fetchUsers());
+    }
+  }, [dispatch, currentRole]);
+
   if (currentRole !== "Admin") {
-    return <p>You do not have permission to view users.</p>;
+    return <p className="alert alert-error">You do not have permission to view users.</p>;
   }
 
   const resetForm = () => {
@@ -73,7 +83,8 @@ function Users({
     setError("");
     setSuccess("");
 
-    let errorMessage: string | null;
+    // unwrap() throws the thunk's rejectWithValue message when it fails
+    let errorMessage: string | null = null;
 
     if (editingUser) {
       // EDIT -> PUT /api/users/:id  (send only the fields that changed)
@@ -90,7 +101,11 @@ function Users({
       }
 
       setIsSaving(true);
-      errorMessage = await onUpdateUser(editingUser.id, changes);
+      try {
+        await dispatch(updateUser({ id: editingUser.id, changes })).unwrap();
+      } catch (message) {
+        errorMessage = String(message);
+      }
       setIsSaving(false);
 
       if (!errorMessage) {
@@ -99,13 +114,19 @@ function Users({
     } else {
       // CREATE -> POST /api/users  (don't send an id: the database creates it)
       setIsSaving(true);
-      errorMessage = await onCreateUser({
-        name: name.trim(),
-        username: username.trim(),
-        email: email.trim(),
-        password,
-        role,
-      });
+      try {
+        await dispatch(
+          createUser({
+            name: name.trim(),
+            username: username.trim(),
+            email: email.trim(),
+            password,
+            role,
+          }),
+        ).unwrap();
+      } catch (message) {
+        errorMessage = String(message);
+      }
       setIsSaving(false);
 
       if (!errorMessage) {
@@ -121,144 +142,207 @@ function Users({
     resetForm();
   };
 
+  const handleDelete = async (id: number) => {
+    if (!window.confirm("Are you sure you want to delete this account?")) return;
+
+    try {
+      await dispatch(deleteUser(id)).unwrap();
+    } catch (message) {
+      alert(String(message));
+    }
+  };
+
   const isEditing = editingUser !== null;
 
   return (
     <section>
-      <h1>User Management</h1>
+      <div className="page-header">
+        <div>
+          <h1>Users</h1>
+          <p className="page-subtitle">Create and manage agent and user accounts.</p>
+        </div>
+      </div>
 
-      <form className="ticket-form" onSubmit={handleSubmit}>
-        <h2>
-          {isEditing
-            ? `Edit ${editingUser.role}: ${editingUser.username}`
-            : "Create Agent / User"}
-        </h2>
+      <div className="users-layout">
+        <form className="card form" onSubmit={handleSubmit}>
+          <h3 className="card-title">
+            {isEditing
+              ? `Edit ${editingUser.role}: ${editingUser.username}`
+              : "New account"}
+          </h3>
 
-        <label>Name</label>
-        <input
-          type="text"
-          placeholder="Enter full name"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          required
-        />
+          <div className="field">
+            <label htmlFor="user-name">Full name</label>
+            <input
+              id="user-name"
+              type="text"
+              placeholder="e.g. Priya Sharma"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              required
+            />
+          </div>
 
-        <label>Username</label>
-        <input
-          type="text"
-          placeholder="Enter username (used to log in)"
-          value={username}
-          onChange={(event) => setUsername(event.target.value)}
-          required
-        />
+          <div className="field">
+            <label htmlFor="user-username">Username</label>
+            <input
+              id="user-username"
+              type="text"
+              placeholder="Used to sign in"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              required
+            />
+          </div>
 
-        <label>Email</label>
-        <input
-          type="email"
-          placeholder="Enter email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          required
-        />
+          <div className="field">
+            <label htmlFor="user-email">Email</label>
+            <input
+              id="user-email"
+              type="email"
+              placeholder="name@company.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
+          </div>
 
-        <label>Password</label>
-        <input
-          type="password"
-          placeholder={
-            isEditing
-              ? "Leave blank to keep the current password"
-              : "Enter password"
-          }
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          required={!isEditing}
-          minLength={6}
-        />
+          <div className="field">
+            <label htmlFor="user-password">Password</label>
+            <input
+              id="user-password"
+              type="password"
+              placeholder={
+                isEditing
+                  ? "Leave blank to keep the current password"
+                  : "At least 6 characters"
+              }
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required={!isEditing}
+              minLength={6}
+            />
+          </div>
 
-        <label>Role</label>
-        <select
-          value={role}
-          onChange={(event) =>
-            setRole(event.target.value as "Agent" | "User")
-          }
-        >
-          <option value="User">User</option>
-          <option value="Agent">Agent</option>
-        </select>
+          <div className="field">
+            <span className="field-label">Role</span>
+            <div className="segmented segmented-full" role="radiogroup" aria-label="Role">
+              {(["User", "Agent"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={role === value}
+                  className={role === value ? "active" : ""}
+                  onClick={() => setRole(value)}
+                >
+                  {value}
+                </button>
+              ))}
+            </div>
+          </div>
 
-        <button type="submit" disabled={isSaving}>
-          {isSaving
-            ? "Saving..."
-            : isEditing
-              ? "Save Changes"
-              : "Create Account"}
-        </button>
+          {error && <p className="alert alert-error">{error}</p>}
+          {success && <p className="alert alert-success">{success}</p>}
 
-        {isEditing && (
-          <button
-            type="button"
-            onClick={cancelEdit}
-            disabled={isSaving}
-            style={{ marginTop: "8px", background: "#64748b" }}
-          >
-            Cancel
-          </button>
-        )}
-
-        {error && <p className="error-message">{error}</p>}
-        {success && <p style={{ color: "#15803d" }}>{success}</p>}
-      </form>
-
-      <h2>All Users and Agents</h2>
-
-      <div className="table-container">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Username</th>
-              <th>Email</th>
-              <th>Role</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {users.length === 0 ? (
-              <tr>
-                <td colSpan={5}>No users or agents created yet.</td>
-              </tr>
-            ) : (
-              users.map((user) => (
-                <tr key={user.id}>
-                  <td>{user.name}</td>
-                  <td>{user.username}</td>
-                  <td>{user.email}</td>
-                  <td>{user.role}</td>
-                  <td>
-                    {user.role !== "Admin" && (
-                      <div style={{ display: "flex", gap: "8px" }}>
-                        <button
-                          type="button"
-                          onClick={() => startEdit(user)}
-                          style={{ background: "#f59e0b" }}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDeleteUser(user.id)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))
+          <div className="form-actions">
+            {isEditing && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={cancelEdit}
+                disabled={isSaving}
+              >
+                Cancel
+              </button>
             )}
-          </tbody>
-        </table>
+            <button className="btn btn-primary" type="submit" disabled={isSaving}>
+              {isSaving
+                ? "Saving..."
+                : isEditing
+                  ? "Save changes"
+                  : "Create account"}
+            </button>
+          </div>
+        </form>
+
+        <div className="card card-flush">
+          <div className="toolbar">
+            <h3>All accounts</h3>
+            <span className="count-pill">{users.length}</span>
+          </div>
+
+          {listStatus === "loading" && <p className="field-hint pad">Loading users...</p>}
+          {listError && <p className="alert alert-error pad">{listError}</p>}
+
+          {users.length === 0 && listStatus !== "loading" ? (
+            <div className="empty-state">
+              <span className="empty-icon">
+                <Icon name="users" size={24} />
+              </span>
+              <p className="empty-title">No accounts yet</p>
+              <p className="text-muted">Create your first agent or user with the form.</p>
+            </div>
+          ) : (
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th aria-label="Actions" />
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {users.map((user) => (
+                    <tr
+                      key={user.id}
+                      className={editingUser?.id === user.id ? "row-selected" : ""}
+                    >
+                      <td>
+                        <span className="person">
+                          <Avatar name={user.name} size={32} />
+                          <span>
+                            <span className="cell-title">{user.name}</span>
+                            <span className="cell-sub">@{user.username}</span>
+                          </span>
+                        </span>
+                      </td>
+                      <td className="text-muted">{user.email}</td>
+                      <td><RoleBadge role={user.role} /></td>
+                      <td className="cell-action">
+                        {user.role !== "Admin" && (
+                          <div className="row-actions">
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              title="Edit"
+                              aria-label={`Edit ${user.username}`}
+                              onClick={() => startEdit(user)}
+                            >
+                              <Icon name="edit" size={16} />
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn icon-btn-danger"
+                              title="Delete"
+                              aria-label={`Delete ${user.username}`}
+                              onClick={() => handleDelete(user.id)}
+                            >
+                              <Icon name="trash" size={16} />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );

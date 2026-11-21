@@ -1,29 +1,38 @@
 
 import { useEffect, useState } from "react";
+import {
+  Routes,
+  Route,
+  Navigate,
+  Outlet,
+  useNavigate,
+  useLocation,
+  useParams,
+} from "react-router-dom";
 
 import type {
   Ticket,
   UserRole,
   TicketStatus,
-  ManagedUser,
-  CreateUserInput,
-  UpdateUserInput,
   CreateTicketInput,
 } from "./types/ticket";
 
+import { useAppDispatch, useAppSelector } from "./store/hooks";
 import {
-  loginUser,
-  logoutUser,
-  refreshSession,
-  getUsers,
-  createUser as createUserApi,
-  updateUser as updateUserApi,
-  deleteUser as deleteUserApi,
+  logout,
+  restoreSession,
+  selectCurrentUser,
+  selectIsLoggedIn,
+  selectRole,
+} from "./store/authSlice";
+
+import {
   getTickets,
   createTicket as createTicketApi,
   assignTicket as assignTicketApi,
+  updateTicketStatus as updateTicketStatusApi,
   getAssignableAgents,
-} from './services/api';
+} from "./services/api";
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -35,319 +44,495 @@ import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import TicketList from "./components/TicketList";
 import type { AgentsState } from "./components/AssignSelect";
+import Icon from "./components/Icon";
+
+import PrivateRoute from "./components/PrivateRoute";
+import PermissionRoute from "./components/PermissionRoute";
 
 type Page = "dashboard" | "tickets" | "create" | "details" | "users";
 
-function App() {
-  const [username, setUsername] = useState("");
-  const [role, setRole] = useState<UserRole>("User");
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [page, setPage] = useState<Page>("dashboard");
-  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
-  // true while we check (on page load) if the refresh cookie still logs us in
-  const [checkingSession, setCheckingSession] = useState(true);
-
-  // Ticket data, loaded from the database through the backend
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-
-  // Agents a ticket can be assigned to (Admin only), loaded from the backend
-  const [agentsState, setAgentsState] = useState<AgentsState>({
-    agents: [],
-    loading: false,
-    error: "",
-  });
-
-  // Users and agents, loaded from the database through the backend
-  const [users, setUsers] = useState<ManagedUser[]>([]);
-
-  // On page load / refresh: if the browser still has a valid refresh cookie,
-  // POST /auth/refresh gives a new access token, so you stay logged in.
-  useEffect(() => {
-    refreshSession()
-      .then((data) => {
-        if (data) {
-          setUsername(data.user.username);
-          setRole(data.user.role);
-          setIsLoggedIn(true);
-        }
-      })
-      .finally(() => setCheckingSession(false));
-  }, []);
-
-  // After login, load the tickets from GET /api/tickets
-  useEffect(() => {
-    if (!isLoggedIn) return;
-
-    getTickets()
-      .then(setTickets)
-      .catch((error) => console.error("Load tickets error:", error));
-  }, [isLoggedIn]);
-
-  // Admin opens All Tickets or a ticket's details -> load the assignable agents
-  // (reloaded each time, so newly created or deactivated agents show up)
-  useEffect(() => {
-    if (role !== "Admin" || !isLoggedIn) return;
-    if (page !== "tickets" && page !== "details") return;
-
-    setAgentsState((previous) => ({ ...previous, loading: true, error: "" }));
-
-    getAssignableAgents()
-      .then((agents) => setAgentsState({ agents, loading: false, error: "" }))
-      .catch((error) =>
-        setAgentsState({
-          agents: [],
-          loading: false,
-          error: error instanceof Error ? error.message : "Unable to load agents",
-        })
-      );
-  }, [page, role, isLoggedIn]);
-
-  // When an Admin opens the Users page, load the users from the database
-  useEffect(() => {
-    if (page !== "users" || role !== "Admin" || !isLoggedIn) return;
-
-    getUsers()
-      .then(setUsers)
-      .catch((error) => console.error("Load users error:", error));
-  }, [page, role, isLoggedIn]);
-
-  // Login with username and password
-  const handleLogin = async (
-    username: string,
-    password: string,
-  ): Promise<boolean> => {
-    try {
-      const data = await loginUser(username, password);
-
-      setUsername(data.user.username);
-      setRole(data.user.role);
-      setIsLoggedIn(true);
-      setPage("dashboard");
-
-      return true;
-    } catch (error) {
-      console.error("Login error:", error);
-      return false;
-    }
-  };
-
-  // Logout: tell the server to revoke the refresh token and clear the cookie
-  const handleLogout = async () => {
-    await logoutUser();
-
-    setIsLoggedIn(false);
-    setUsername("");
-    setRole("User");
-    setUsers([]);
-    setTickets([]);
-    setAgentsState({ agents: [], loading: false, error: "" });
-    setSelectedTicket(null);
-    setPage("dashboard");
-  };
-
-  // Create ticket
-  // Create ticket -> saves to the database via POST /api/tickets
-  // Returns an error message, or null if it worked.
-  const addTicket = async (
-    input: CreateTicketInput
-  ): Promise<string | null> => {
-    try {
-      const savedTicket = await createTicketApi(input);
-      setTickets((previous) => [savedTicket, ...previous]);
-      setPage("tickets");
-      return null;
-    } catch (error) {
-      return error instanceof Error ? error.message : "Failed to create ticket.";
-    }
-  };
-
-  // Assign / unassign a ticket -> PATCH /api/tickets/:id/assign, then reload
-  // the list so every page shows the saved data.
-  // Returns an error message, or null if it worked.
-  const assignTicket = async (
-    ticketId: number,
-    agentId: number | null
-  ): Promise<string | null> => {
-    if (role !== "Admin" || !isLoggedIn) return "You are not allowed to do this.";
-
-    try {
-      const updatedTicket = await assignTicketApi(ticketId, agentId);
-      // Show the change right away, then refresh from the server
-      setTickets((previous) =>
-        previous.map((ticket) => (ticket.id === ticketId ? updatedTicket : ticket))
-      );
-      getTickets()
-        .then(setTickets)
-        .catch((error) => console.error("Reload tickets error:", error));
-      return null;
-    } catch (error) {
-      return error instanceof Error ? error.message : "Failed to assign ticket.";
-    }
-  };
-
-  // Update ticket status
-  const updateStatus = (id: number, status: TicketStatus) => {
-    setTickets((previous) =>
-      previous.map((ticket) =>
-        ticket.id === id ? { ...ticket, status } : ticket
-      )
-    );
-  };
-
-  // Create Agent or User -> saves to the database via POST /api/users
-  // Returns an error message, or null if it worked.
-  const createUser = async (
-    newUser: CreateUserInput
-  ): Promise<string | null> => {
-    if (role !== "Admin" || !isLoggedIn) return "You are not allowed to do this.";
-
-    const accountExists = users.some(
-      (user) =>
-        user.username.toLowerCase() === newUser.username.toLowerCase() ||
-        user.email.toLowerCase() === newUser.email.toLowerCase()
-    );
-
-    if (accountExists) {
-      return "Username or email already exists.";
-    }
-
-    try {
-      const savedUser = await createUserApi(newUser);
-      setUsers((previous) => [...previous, savedUser]);
-      return null;
-    } catch (error) {
-      return error instanceof Error ? error.message : "Failed to create user.";
-    }
-  };
-
-  // Edit Agent or User -> saves to the database via PUT /api/users/:id
-  // Returns an error message, or null if it worked.
-  const updateUser = async (
-    id: number,
-    changes: UpdateUserInput
-  ): Promise<string | null> => {
-    if (role !== "Admin" || !isLoggedIn) return "You are not allowed to do this.";
-
-    try {
-      const updatedUser = await updateUserApi(id, changes);
-      setUsers((previous) =>
-        previous.map((user) => (user.id === id ? updatedUser : user))
-      );
-      return null;
-    } catch (error) {
-      return error instanceof Error ? error.message : "Failed to update user.";
-    }
-  };
-
-  // Delete Agent or User -> removes from the database via DELETE /api/users/:id
-  const deleteUser = async (id: number) => {
-    if (role !== "Admin" || !isLoggedIn) return;
-
-    const confirmed = window.confirm(
-      "Are you sure you want to delete this account?"
-    );
-
-    if (!confirmed) return;
-
-    try {
-      await deleteUserApi(id);
-      setUsers((previous) => previous.filter((user) => user.id !== id));
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Failed to delete user.");
-    }
-  };
-
-  // The backend already filters by role (User: own, Agent: assigned, Admin: all)
-  const visibleTickets = tickets;
-
-  // Select ticket
-  const selectTicket = (ticket: Ticket) => {
-    setSelectedTicket(ticket);
-    setPage("details");
-  };
-
-  // While checking the refresh cookie on page load
-  if (checkingSession) {
-    return <p style={{ padding: "24px" }}>Loading...</p>;
-  }
-
-  // Login page
-  if (!isLoggedIn) {
-    return <Login onLogin={handleLogin} />;
-  }
-
+// Layout for all protected pages
+function AppLayout({
+  page,
+  role,
+  username,
+  onLogout,
+  onNavigate,
+}: {
+  page: Page;
+  role: UserRole;
+  username: string;
+  onLogout: () => void;
+  onNavigate: (nextPage: string) => void;
+}) {
   return (
     <div className="app-layout">
       <Sidebar
         page={page}
         role={role}
-        onNavigate={(nextPage) => {
-          setSelectedTicket(null);
-          setPage(nextPage as Page);
-        }}
+        onNavigate={onNavigate}
       />
 
       <main className="main-content">
         <Header
           username={username}
           role={role}
-          onLogout={handleLogout}
+          onLogout={onLogout}
         />
 
         <div className="page-content">
-          {page === "dashboard" && (
-            <Dashboard
-              tickets={visibleTickets}
-              onSelect={selectTicket}
-            />
-          )}
-
-          {page === "tickets" && (
-            <section>
-              <h1>All Tickets</h1>
-              <TicketList
-                tickets={visibleTickets}
-                onSelect={selectTicket}
-                assignment={
-                  role === "Admin"
-                    ? { agentsState, onAssign: assignTicket }
-                    : undefined
-                }
-              />
-            </section>
-          )}
-
-          {page === "create" && role !== "Agent" && (
-            <CreateTicket onAddTicket={addTicket} />
-          )}
-
-          {page === "details" && selectedTicket && (
-            <TicketDetails
-              ticket={
-                tickets.find(
-                  (ticket) => ticket.id === selectedTicket.id
-                )!
-              }
-              role={role}
-              onUpdateStatus={updateStatus}
-              agentsState={agentsState}
-              onAssign={assignTicket}
-              onBack={() => setPage("tickets")}
-            />
-          )}
-
-          {page === "users" && (
-            <Users
-              currentRole={role}
-              users={users}
-              onCreateUser={createUser}
-              onUpdateUser={updateUser}
-              onDeleteUser={deleteUser}
-            />
-          )}
+          <Outlet />
         </div>
       </main>
     </div>
+  );
+}
+
+// Get ticket details using the ticket number in the URL
+function TicketDetailsRoute({
+  tickets,
+  ticketsLoaded,
+  role,
+  agentsState,
+  onUpdateStatus,
+  onAssign,
+  onBack,
+}: {
+  tickets: Ticket[];
+  ticketsLoaded: boolean;
+  role: UserRole;
+  agentsState: AgentsState;
+  onUpdateStatus: (id: number, status: TicketStatus) => Promise<string | null>;
+  onAssign: (
+    ticketId: number,
+    agentId: number | null
+  ) => Promise<string | null>;
+  onBack: () => void;
+}) {
+  const { ticketNo } = useParams();
+
+  if (!ticketsLoaded) {
+    return <p>Loading ticket...</p>;
+  }
+
+  const selectedTicket = tickets.find(
+    (ticket) => String(ticket.id) === ticketNo
+  );
+
+  if (!selectedTicket) {
+    return <Navigate to="/tickets" replace />;
+  }
+
+  return (
+    <TicketDetails
+      ticket={selectedTicket}
+      role={role}
+      onUpdateStatus={onUpdateStatus}
+      agentsState={agentsState}
+      onAssign={onAssign}
+      onBack={onBack}
+    />
+  );
+}
+
+function App() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Logged-in user, from the Redux store (store/authSlice.ts)
+  const dispatch = useAppDispatch();
+  const isLoggedIn = useAppSelector(selectIsLoggedIn);
+  const role = useAppSelector(selectRole);
+  const username = useAppSelector(selectCurrentUser)?.username ?? "";
+  const checkingSession = !useAppSelector((state) => state.auth.sessionChecked);
+
+  const [page, setPage] = useState<Page>("dashboard");
+
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [ticketsLoaded, setTicketsLoaded] = useState(false);
+
+  const [agentsState, setAgentsState] = useState<AgentsState>({
+    agents: [],
+    loading: false,
+    error: "",
+  });
+
+  // Update page based on URL
+  useEffect(() => {
+    const path = location.pathname;
+
+    if (path === "/dashboard") {
+      setPage("dashboard");
+    } else if (path === "/tickets") {
+      setPage("tickets");
+    } else if (path === "/tickets/new") {
+      setPage("create");
+    } else if (path.startsWith("/tickets/")) {
+      setPage("details");
+    } else if (path === "/users") {
+      setPage("users");
+    }
+  }, [location.pathname]);
+
+  // Sidebar navigation
+  const goToPage = (nextPage: Page) => {
+    const paths: Record<Page, string> = {
+      dashboard: "/dashboard",
+      tickets: "/tickets",
+      create: "/tickets/new",
+      details: "/tickets",
+      users: "/users",
+    };
+
+    navigate(paths[nextPage]);
+  };
+
+  // Check login session when application loads
+  useEffect(() => {
+    dispatch(restoreSession());
+  }, [dispatch]);
+
+  // Load tickets after login
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setTicketsLoaded(false);
+      return;
+    }
+
+    setTicketsLoaded(false);
+
+    getTickets()
+      .then(setTickets)
+      .catch((error) => {
+        console.error("Load tickets error:", error);
+      })
+      .finally(() => {
+        setTicketsLoaded(true);
+      });
+  }, [isLoggedIn]);
+
+  // Load assignable agents for Admin
+  useEffect(() => {
+    if (role !== "Admin" || !isLoggedIn) return;
+
+    if (page !== "tickets" && page !== "details") return;
+
+    setAgentsState((previous) => ({
+      ...previous,
+      loading: true,
+      error: "",
+    }));
+
+    getAssignableAgents()
+      .then((agents) => {
+        setAgentsState({
+          agents,
+          loading: false,
+          error: "",
+        });
+      })
+      .catch((error) => {
+        setAgentsState({
+          agents: [],
+          loading: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unable to load agents",
+        });
+      });
+  }, [page, role, isLoggedIn]);
+
+  // Logout
+  // (the auth and users slices reset themselves on logout)
+  const handleLogout = async () => {
+    try {
+      await dispatch(logout());
+    } finally {
+      setTickets([]);
+      setTicketsLoaded(false);
+
+      setAgentsState({
+        agents: [],
+        loading: false,
+        error: "",
+      });
+
+      navigate("/login", { replace: true });
+    }
+  };
+
+  // Create ticket
+  const addTicket = async (
+    input: CreateTicketInput
+  ): Promise<string | null> => {
+    try {
+      const savedTicket = await createTicketApi(input);
+
+      setTickets((previous) => [
+        savedTicket,
+        ...previous,
+      ]);
+
+      navigate("/tickets");
+
+      return null;
+    } catch (error) {
+      return error instanceof Error
+        ? error.message
+        : "Failed to create ticket.";
+    }
+  };
+
+  // Assign or unassign ticket
+  const assignTicket = async (
+    ticketId: number,
+    agentId: number | null
+  ): Promise<string | null> => {
+    if (role !== "Admin" || !isLoggedIn) {
+      return "You are not allowed to do this.";
+    }
+
+    try {
+      const updatedTicket = await assignTicketApi(
+        ticketId,
+        agentId
+      );
+
+      setTickets((previous) =>
+        previous.map((ticket) =>
+          ticket.id === ticketId ? updatedTicket : ticket
+        )
+      );
+
+      getTickets()
+        .then(setTickets)
+        .catch((error) => {
+          console.error("Reload tickets error:", error);
+        });
+
+      return null;
+    } catch (error) {
+      return error instanceof Error
+        ? error.message
+        : "Failed to assign ticket.";
+    }
+  };
+
+  // Update ticket status (Admin, or the assigned Agent) -> saved on the backend
+  const updateStatus = async (
+    id: number,
+    status: TicketStatus
+  ): Promise<string | null> => {
+    try {
+      const updatedTicket = await updateTicketStatusApi(id, status);
+
+      setTickets((previous) =>
+        previous.map((ticket) =>
+          ticket.id === id ? updatedTicket : ticket
+        )
+      );
+
+      return null;
+    } catch (error) {
+      return error instanceof Error
+        ? error.message
+        : "Failed to update status.";
+    }
+  };
+
+  // Open selected ticket
+  const selectTicket = (ticket: Ticket) => {
+    navigate(`/tickets/${ticket.id}`);
+  };
+
+  // Wait until session checking finishes
+  if (checkingSession) {
+    return (
+      <div className="full-page-message">
+        <span className="spinner" />
+        <p className="text-muted">Loading your workspace...</p>
+      </div>
+    );
+  }
+
+  return (
+    <Routes>
+      {/* Login page */}
+      <Route
+        path="/login"
+        element={
+          isLoggedIn ? (
+            <Navigate to="/dashboard" replace />
+          ) : (
+            <Login />
+          )
+        }
+      />
+
+      {/* Routes requiring login */}
+      <Route element={<PrivateRoute isLoggedIn={isLoggedIn} />}>
+        <Route
+          element={
+            <AppLayout
+              page={page}
+              role={role}
+              username={username}
+              onLogout={handleLogout}
+              onNavigate={(nextPage) => {
+                goToPage(nextPage as Page);
+              }}
+            />
+          }
+        >
+          {/* Default page */}
+          <Route
+            index
+            element={<Navigate to="/dashboard" replace />}
+          />
+
+          {/* Dashboard */}
+          <Route
+            path="/dashboard"
+            element={
+              <Dashboard
+                tickets={tickets}
+                onSelect={selectTicket}
+              />
+            }
+          />
+
+          {/* All Tickets */}
+          <Route
+            path="/tickets"
+            element={
+              <section>
+                <div className="page-header">
+                  <div>
+                    <h1>{role === "Agent" ? "My Tickets" : "All Tickets"}</h1>
+                    <p className="page-subtitle">
+                      {role === "Admin"
+                        ? "Every ticket in the system. Assign agents from the list."
+                        : role === "Agent"
+                          ? "Tickets assigned to you."
+                          : "Tickets you have raised."}
+                    </p>
+                  </div>
+
+                  {role !== "Agent" && (
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => navigate("/tickets/new")}
+                    >
+                      <Icon name="plus" size={16} /> New ticket
+                    </button>
+                  )}
+                </div>
+
+                {!ticketsLoaded ? (
+                  <p className="field-hint">Loading tickets...</p>
+                ) : (
+                <TicketList
+                  tickets={tickets}
+                  onSelect={selectTicket}
+                  assignment={
+                    role === "Admin"
+                      ? {
+                          agentsState,
+                          onAssign: assignTicket,
+                        }
+                      : undefined
+                  }
+                />
+                )}
+              </section>
+            }
+          />
+
+          {/* Admin and User can create tickets */}
+          <Route
+            element={
+              <PermissionRoute
+                role={role}
+                allowedRoles={["Admin", "User"]}
+              />
+            }
+          >
+            <Route
+              path="/tickets/new"
+              element={
+                <CreateTicket onAddTicket={addTicket} />
+              }
+            />
+          </Route>
+
+          {/* Ticket Details */}
+          <Route
+            path="/tickets/:ticketNo"
+            element={
+              <TicketDetailsRoute
+                tickets={tickets}
+                ticketsLoaded={ticketsLoaded}
+                role={role}
+                agentsState={agentsState}
+                onUpdateStatus={updateStatus}
+                onAssign={assignTicket}
+                onBack={() => navigate("/tickets")}
+              />
+            }
+          />
+
+          {/* Only Admin can open Users */}
+          <Route
+            element={
+              <PermissionRoute
+                role={role}
+                allowedRoles={["Admin"]}
+              />
+            }
+          >
+            <Route
+              path="/users"
+              element={
+                <Users />
+              }
+            />
+          </Route>
+        </Route>
+      </Route>
+
+      {/* Access denied */}
+      <Route
+        path="/access-denied"
+        element={
+          <div className="full-page-message">
+            <p className="big-code">403</p>
+            <h1>Access denied</h1>
+            <p className="text-muted">
+              You do not have permission to access this page.
+            </p>
+            <button className="btn btn-primary" onClick={() => navigate("/dashboard")}>
+              Back to dashboard
+            </button>
+          </div>
+        }
+      />
+
+      {/* Unknown URL */}
+      <Route
+        path="*"
+        element={
+          <div className="full-page-message">
+            <p className="big-code">404</p>
+            <h1>Page not found</h1>
+            <p className="text-muted">The page you are looking for does not exist.</p>
+            <button className="btn btn-primary" onClick={() => navigate("/dashboard")}>
+              Back to dashboard
+            </button>
+          </div>
+        }
+      />
+    </Routes>
   );
 }
 

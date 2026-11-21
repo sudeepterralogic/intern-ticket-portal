@@ -1,72 +1,86 @@
-
 import type { Ticket, TicketStatus } from "../types/ticket";
-import StatusBadge from "../components/StatusBadge";
+import { PriorityBadge } from "../components/StatusBadge";
+import { Person } from "../components/Avatar";
+import Icon, { type IconName } from "../components/Icon";
 
 type Props = {
   tickets: Ticket[];
   onSelect: (ticket: Ticket) => void;
 };
 
+const COLUMNS: { status: TicketStatus; icon: IconName; tone: string }[] = [
+  { status: "Open", icon: "open", tone: "info" },
+  { status: "In Progress", icon: "progress", tone: "warning" },
+  { status: "Closed", icon: "closed", tone: "success" },
+];
+
 function Dashboard({ tickets, onSelect }: Props) {
-  const columns: TicketStatus[] = ["Open", "In Progress", "Closed"];
+  const count = (status: TicketStatus) => tickets.filter((t) => t.status === status).length;
+
+  const stats: { label: string; value: number; icon: IconName; tone: string }[] = [
+    { label: "Total Tickets", value: tickets.length, icon: "ticket", tone: "primary" },
+    ...COLUMNS.map((c) => ({ label: c.status, value: count(c.status), icon: c.icon, tone: c.tone })),
+  ];
 
   return (
     <section>
-      <h1>Ticket Board</h1>
-
-      <div className="dashboard-cards">
-        <div className="card">
-          <h3>Total Tickets</h3>
-          <p>{tickets.length}</p>
-        </div>
-        <div className="card">
-          <h3>Open Tickets</h3>
-          <p>{tickets.filter((t) => t.status === "Open").length}</p>
-        </div>
-        <div className="card">
-          <h3>In Progress</h3>
-          <p>{tickets.filter((t) => t.status === "In Progress").length}</p>
-        </div>
-        <div className="card">
-          <h3>Closed Tickets</h3>
-          <p>{tickets.filter((t) => t.status === "Closed").length}</p>
+      <div className="page-header">
+        <div>
+          <h1>Dashboard</h1>
+          <p className="page-subtitle">An overview of every ticket you can see.</p>
         </div>
       </div>
 
-      <div className="ticket-board">
-        {columns.map((column) => {
-          const columnTickets = tickets.filter(
-            (ticket) => ticket.status === column
-          );
+      <div className="stat-grid">
+        {stats.map((stat) => (
+          <div className="stat-card" key={stat.label}>
+            <span className={`stat-icon tone-${stat.tone}`}>
+              <Icon name={stat.icon} size={20} />
+            </span>
+            <div>
+              <p className="stat-label">{stat.label}</p>
+              <p className="stat-value">{stat.value}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="board">
+        {COLUMNS.map((column) => {
+          const columnTickets = tickets.filter((ticket) => ticket.status === column.status);
 
           return (
-            <div className="ticket-column" key={column}>
-              <h3>{column} ({columnTickets.length})</h3>
+            <div className="board-column" key={column.status}>
+              <div className="board-column-header">
+                <span className={`column-dot tone-${column.tone}`} />
+                <h3>{column.status}</h3>
+                <span className="count-pill">{columnTickets.length}</span>
+              </div>
 
               {columnTickets.length === 0 ? (
-                <p className="empty-message">No tickets</p>
+                <div className="board-empty">No tickets here</div>
               ) : (
                 columnTickets.map((ticket) => (
-                  <div
-                    className="ticket-card"
+                  <button
+                    type="button"
+                    className="board-card"
                     key={ticket.id}
                     onClick={() => onSelect(ticket)}
                   >
-                    <h4>#{ticket.id}</h4>
-                    <h3>{ticket.title}</h3>
-                    <p>Priority: {ticket.priority}</p>
-                    <p>Assigned to: {ticket.assignedTo}</p>
-                    <StatusBadge status={ticket.status} />
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelect(ticket);
-                      }}
-                    >
-                      View Ticket
-                    </button>
-                  </div>
+                    <div className="board-card-top">
+                      <span className="ticket-id">#{ticket.id}</span>
+                      <PriorityBadge priority={ticket.priority} />
+                    </div>
+                    <p className="board-card-title">{ticket.title}</p>
+                    {ticket.category && <span className="tag">{ticket.category}</span>}
+                    <div className="board-card-footer">
+                      <Person
+                        name={ticket.assignedTo}
+                        empty={ticket.assignedToId === null}
+                      />
+                      <span className="text-subtle">{ticket.createdAt}</span>
+                    </div>
+                  </button>
                 ))
               )}
             </div>
