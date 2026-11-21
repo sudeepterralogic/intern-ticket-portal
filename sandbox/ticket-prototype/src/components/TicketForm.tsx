@@ -8,6 +8,8 @@ type Props = {
   onAddTicket: (ticket: CreateTicketInput) => Promise<string | null>;
 };
 
+const PRIORITIES: TicketPriority[] = ["Low", "Medium", "High"];
+
 function TicketForm({ onAddTicket }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -60,52 +62,73 @@ function TicketForm({ onAddTicket }: Props) {
   };
 
   return (
-    <form className="ticket-form" onSubmit={handleSubmit}>
-      <label>Ticket Title</label>
-      <input
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="Enter ticket title"
-        required
-      />
+    <form className="card form" onSubmit={handleSubmit}>
+      <div className="field">
+        <label htmlFor="ticket-title">Title</label>
+        <input
+          id="ticket-title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g. Laptop won't connect to Wi-Fi"
+          required
+        />
+      </div>
 
-      <label>Description</label>
-      <textarea
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        placeholder="Enter ticket description"
-        required
-      />
+      <div className="field">
+        <label htmlFor="ticket-description">Description</label>
+        <textarea
+          id="ticket-description"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="What happened, and what did you expect?"
+          required
+        />
+      </div>
 
-      <label>Category</label>
-      <select
-        value={categoryId}
-        onChange={(e) => setCategoryId(Number(e.target.value))}
-        required
-      >
-        {categories.length === 0 && <option value="">No categories available</option>}
-        {categories.map((category) => (
-          <option key={category.id} value={category.id}>
-            {category.name}
-          </option>
-        ))}
-      </select>
+      <div className="form-row">
+        <div className="field">
+          <label htmlFor="ticket-category">Category</label>
+          <select
+            id="ticket-category"
+            value={categoryId}
+            onChange={(e) => setCategoryId(Number(e.target.value))}
+            required
+          >
+            {categories.length === 0 && <option value="">No categories available</option>}
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      <label>Priority</label>
-      <select
-        value={priority}
-        onChange={(e) => setPriority(e.target.value as TicketPriority)}
-      >
-        <option value="Low">Low</option>
-        <option value="Medium">Medium</option>
-        <option value="High">High</option>
-      </select>
+        <div className="field">
+          <span className="field-label">Priority</span>
+          <div className="segmented segmented-full" role="radiogroup" aria-label="Priority">
+            {PRIORITIES.map((value) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={priority === value}
+                className={priority === value ? `active priority-${value.toLowerCase()}` : ""}
+                onClick={() => setPriority(value)}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
-      {error && <p className="error-text" style={{ color: "crimson" }}>{error}</p>}
+      {error && <p className="alert alert-error">{error}</p>}
 
-      <button type="submit" disabled={submitting}>
-        {submitting ? "Creating..." : "Create Ticket"}
-      </button>
+      <div className="form-actions">
+        <button className="btn btn-primary" type="submit" disabled={submitting}>
+          {submitting ? "Creating..." : "Create ticket"}
+        </button>
+      </div>
     </form>
   );
 }

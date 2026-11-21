@@ -1,7 +1,8 @@
-
 import type { Ticket } from "../types/ticket";
-import StatusBadge from "./StatusBadge";
+import { PriorityBadge, StatusBadge } from "./StatusBadge";
 import AssignSelect, { type AgentsState } from "./AssignSelect";
+import { Person } from "./Avatar";
+import Icon from "./Icon";
 
 type Props = {
   ticket: Ticket;
@@ -16,9 +17,14 @@ type Props = {
 function TicketRow({ ticket, onSelect, assignment }: Props) {
   return (
     <tr>
-      <td>#{ticket.id}</td>
-      <td>{ticket.title}</td>
-      <td>{ticket.priority}</td>
+      <td className="ticket-id">#{ticket.id}</td>
+      <td>
+        <p className="cell-title">{ticket.title}</p>
+        <p className="cell-sub">
+          {ticket.category ? `${ticket.category} · ` : ""}by {ticket.createdBy} · {ticket.createdAt}
+        </p>
+      </td>
+      <td><PriorityBadge priority={ticket.priority} /></td>
       <td><StatusBadge status={ticket.status} /></td>
       <td>
         {assignment ? (
@@ -28,11 +34,13 @@ function TicketRow({ ticket, onSelect, assignment }: Props) {
             onAssign={assignment.onAssign}
           />
         ) : (
-          ticket.assignedTo
+          <Person name={ticket.assignedTo} empty={ticket.assignedToId === null} />
         )}
       </td>
-      <td>
-        <button onClick={() => onSelect(ticket)}>View</button>
+      <td className="cell-action">
+        <button className="btn btn-ghost btn-sm" onClick={() => onSelect(ticket)}>
+          View <Icon name="arrow" size={14} />
+        </button>
       </td>
     </tr>
   );

@@ -11,115 +11,40 @@ import type {
   UserRole,
 } from '../types/ticket';
 
-const API_URL = 'http://localhost:3000/api';
+import {
+  http,
+  refreshAccessToken,
+  setAccessToken,
+  type LoginResponse,
+} from './http';
 
-export type LoginResponse = {
-  access_token: string;
-  user: {
-    id: number;
-    name: string;
-    username: string;
-    email: string;
-    role: 'Admin' | 'Agent' | 'User';
-  };
-};
-
-// ---------- Token handling ----------
+// All API calls of the app. Each function uses the shared axios instance
+// (services/http.ts), which attaches the token, refreshes it on 401 and
+// turns every failure into an ApiError { status, message }.
 //
-// ACCESS token  -> kept here in memory only (not localStorage), lives 15 min,
-//                  sent as  Authorization: Bearer <token>
-// REFRESH token -> kept by the BROWSER in an HttpOnly cookie. Our JavaScript
-//                  can't read it; the browser sends it to /api/auth/* when we
-//                  use  credentials: 'include'.
-let accessToken: string | null = null;
+// Components must NOT import axios; they dispatch Redux thunks (store/)
+// or, for data not in the store yet (tickets, categories), call these.
 
-// Reads the JSON body and throws a readable error if the request failed.
-// NestJS sends `message` as a string, or as a string[] for validation errors.
-async function handleResponse<T>(response: Response, fallback: string): Promise<T> {
-  const data = await response.json().catch(() => ({}));
+export type { LoginResponse };
 
-  if (!response.ok) {
-    const message = Array.isArray(data.message)
-      ? data.message.join(', ')
-      : data.message;
-    throw new Error(message || fallback);
-  }
-
-  return data as T;
-}
+// ---------- Auth ----------
 
 // POST /auth/login -> access token in the body, refresh token set as a cookie
 export async function loginUser(username: string, password: string): Promise<LoginResponse> {
-  const response = await fetch(`${API_URL}/auth/login`, {
-    method: 'POST',
-    credentials: 'include', // allow the browser to SAVE the refresh cookie
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ username, password }),
-  });
-
-  const data = await handleResponse<LoginResponse>(response, 'Login failed');
-  accessToken = data.access_token;
+  const { data } = await http.post<LoginResponse>('/auth/login', { username, password });
+  setAccessToken(data.access_token);
   return data;
 }
 
-// POST /auth/refresh -> uses the cookie to get a NEW access token.
-// Returns null if there is no valid session (not logged in).
-// If several requests need a refresh at once, they share one call.
-let refreshPromise: Promise<LoginResponse | null> | null = null;
-
+// POST /auth/refresh -> new access token from the cookie, or null if not logged in
 export function refreshSession(): Promise<LoginResponse | null> {
-  refreshPromise ??= (async () => {
-    try {
-      const response = await fetch(`${API_URL}/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include', // SEND the refresh cookie
-      });
-      if (!response.ok) {
-        accessToken = null;
-        return null;
-      }
-      const data = (await response.json()) as LoginResponse;
-      accessToken = data.access_token;
-      return data;
-    } catch {
-      return null;
-    } finally {
-      refreshPromise = null;
-    }
-  })();
-  return refreshPromise;
+  return refreshAccessToken();
 }
 
 // POST /auth/logout -> server revokes the refresh token and clears the cookie
 export async function logoutUser(): Promise<void> {
-  accessToken = null;
-  await fetch(`${API_URL}/auth/logout`, {
-    method: 'POST',
-    credentials: 'include',
-  }).catch(() => undefined);
-}
-
-// fetch() for protected routes: adds the access token, and if the server
-// says 401 (token expired), refreshes once and tries again.
-async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const send = () =>
-    fetch(`${API_URL}${path}`, {
-      ...init,
-      headers: {
-        ...(init.headers ?? {}),
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      },
-    });
-
-  let response = await send();
-
-  if (response.status === 401 && (await refreshSession())) {
-    response = await send();
-  }
-
-  return response;
+  setAccessToken(null);
+  await http.post('/auth/logout').catch(() => undefined);
 }
 
 // ---------- Tickets ----------
@@ -129,6 +54,12 @@ const STATUS_LABELS: Record<string, TicketStatus> = {
   OPEN: 'Open',
   IN_PROGRESS: 'In Progress',
   CLOSED: 'Closed',
+};
+
+const STATUS_TO_API: Record<TicketStatus, string> = {
+  Open: 'OPEN',
+  'In Progress': 'IN_PROGRESS',
+  Closed: 'CLOSED',
 };
 
 const PRIORITY_TO_API: Record<TicketPriority, string> = {
@@ -174,25 +105,18 @@ function toTicket(t: ApiTicket): Ticket {
 // GET /tickets -> the backend already filters by role
 // (User: own tickets, Agent: assigned tickets, Admin: all)
 export async function getTickets(): Promise<Ticket[]> {
-  const response = await authFetch('/tickets');
-  const data = await handleResponse<ApiTicket[]>(response, 'Unable to fetch tickets');
+  const { data } = await http.get<ApiTicket[]>('/tickets');
   return data.map(toTicket);
 }
 
 // POST /tickets -> creates the ticket for the logged-in user
 export async function createTicket(input: CreateTicketInput): Promise<Ticket> {
-  const response = await authFetch('/tickets', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      title: input.title,
-      description: input.description,
-      category: input.categoryId,
-      priority: PRIORITY_TO_API[input.priority],
-    }),
+  const { data } = await http.post<ApiTicket>('/tickets', {
+    title: input.title,
+    description: input.description,
+    category: input.categoryId,
+    priority: PRIORITY_TO_API[input.priority],
   });
-
-  const data = await handleResponse<ApiTicket>(response, 'Unable to create ticket');
   return toTicket(data);
 }
 
@@ -202,20 +126,28 @@ export async function assignTicket(
   id: number,
   assignedToId: number | null,
 ): Promise<Ticket> {
-  const response = await authFetch(`/tickets/${id}/assign`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ assignedTo: assignedToId }),
+  const { data } = await http.patch<ApiTicket>(`/tickets/${id}/assign`, {
+    assignedTo: assignedToId,
   });
+  return toTicket(data);
+}
 
-  const data = await handleResponse<ApiTicket>(response, 'Unable to assign ticket');
+// PATCH /tickets/:id/status (Admin, or the Agent the ticket is assigned to).
+// Returns the updated ticket.
+export async function updateTicketStatus(
+  id: number,
+  status: TicketStatus,
+): Promise<Ticket> {
+  const { data } = await http.patch<ApiTicket>(`/tickets/${id}/status`, {
+    status: STATUS_TO_API[status],
+  });
   return toTicket(data);
 }
 
 // GET /categories (public route)
 export async function getCategories(): Promise<Category[]> {
-  const response = await authFetch('/categories');
-  return handleResponse<Category[]>(response, 'Unable to fetch categories');
+  const { data } = await http.get<Category[]>('/categories');
+  return data;
 }
 
 // ---------- Users (Admin only) ----------
@@ -236,26 +168,20 @@ export type PaginatedUsers = {
 export async function getUsers(
   options: { page?: number; limit?: number; search?: string; role?: UserRole } = {},
 ): Promise<ManagedUser[]> {
-  const params = new URLSearchParams({
-    page: String(options.page ?? 1),
-    limit: String(options.limit ?? 100),
+  const { data } = await http.get<PaginatedUsers>('/users', {
+    params: {
+      page: options.page ?? 1,
+      limit: options.limit ?? 100,
+      search: options.search || undefined, // undefined = not sent
+      role: options.role,
+    },
   });
-  if (options.search) params.set('search', options.search);
-  if (options.role) params.set('role', options.role);
-
-  const response = await authFetch(`/users?${params}`);
-  const result = await handleResponse<PaginatedUsers>(response, 'Unable to fetch users');
-  return result.data;
+  return data.data;
 }
 
 export async function createUser(user: CreateUserInput): Promise<ManagedUser> {
-  const response = await authFetch('/users', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(user),
-  });
-
-  return handleResponse<ManagedUser>(response, 'Unable to create user');
+  const { data } = await http.post<ManagedUser>('/users', user);
+  return data;
 }
 
 // PUT /users/:id -> returns the updated user (without password)
@@ -263,16 +189,10 @@ export async function updateUser(
   id: number,
   changes: UpdateUserInput,
 ): Promise<ManagedUser> {
-  const response = await authFetch(`/users/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(changes),
-  });
-
-  return handleResponse<ManagedUser>(response, 'Unable to update user');
+  const { data } = await http.put<ManagedUser>(`/users/${id}`, changes);
+  return data;
 }
 
-export async function deleteUser(id: number) {
-  const response = await authFetch(`/users/${id}`, { method: 'DELETE' });
-  return handleResponse(response, 'Unable to delete user');
+export async function deleteUser(id: number): Promise<void> {
+  await http.delete(`/users/${id}`);
 }

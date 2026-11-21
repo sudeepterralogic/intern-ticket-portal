@@ -1,5 +1,5 @@
-
 import type { UserRole } from "../types/ticket";
+import Icon, { type IconName } from "./Icon";
 
 type Props = {
   page: string;
@@ -7,26 +7,41 @@ type Props = {
   onNavigate: (page: string) => void;
 };
 
+type MenuItem = { id: string; label: string; icon: IconName };
+
 function Sidebar({ page, role, onNavigate }: Props) {
-  const menuItems = [
-    { id: "dashboard", label: "Dashboard" },
-    { id: "tickets", label: "All Tickets" },
-    { id: "create", label: "Create Ticket" },
-    ...(role === "Admin" ? [{ id: "users", label: "Users" }] : []),
+  const menuItems: MenuItem[] = [
+    { id: "dashboard", label: "Dashboard", icon: "dashboard" },
+    { id: "tickets", label: role === "Agent" ? "My Tickets" : "All Tickets", icon: "ticket" },
+    // Same rule as the /tickets/new route: Agents don't create tickets
+    ...(role !== "Agent"
+      ? [{ id: "create", label: "Create Ticket", icon: "plus" } as MenuItem]
+      : []),
+    ...(role === "Admin" ? [{ id: "users", label: "Users", icon: "users" } as MenuItem] : []),
   ];
+
+  // The details page belongs to "tickets" in the menu
+  const activeId = page === "details" ? "tickets" : page;
 
   return (
     <aside className="sidebar">
-      <h2>Ticket Portal</h2>
+      <div className="brand">
+        <span className="brand-logo">
+          <Icon name="ticket" size={18} />
+        </span>
+        <span className="brand-name">Ticket Portal</span>
+      </div>
 
+      <p className="sidebar-section">Menu</p>
       <nav>
         {menuItems.map((item) => (
           <button
             key={item.id}
-            className={page === item.id ? "active" : ""}
+            className={activeId === item.id ? "active" : ""}
             onClick={() => onNavigate(item.id)}
           >
-            {item.label}
+            <Icon name={item.icon} />
+            <span>{item.label}</span>
           </button>
         ))}
       </nav>
